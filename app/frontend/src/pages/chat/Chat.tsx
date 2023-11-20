@@ -5,7 +5,7 @@ import readNDJSONStream from "ndjson-readablestream";
 
 import styles from "./Chat.module.css";
 
-import { chatApi, RetrievalMode, ChatAppResponse, ChatAppResponseOrError, ChatAppRequest, ResponseMessage } from "../../api";
+import { chatApi, RetrievalMode, ChatAppResponse, ChatAppResponseOrError, ChatAppRequest, ResponseMessage, chatApiWps } from "../../api";
 import { Answer, AnswerError, AnswerLoading } from "../../components/Answer";
 import { QuestionInput } from "../../components/QuestionInput";
 import { ExampleList } from "../../components/Example";
@@ -63,7 +63,11 @@ const Chat = () => {
         };
         try {
             setIsStreaming(true);
-            for await (const event of readNDJSONStream(responseBody)) {
+            const reader = responseBody.getReader();
+            var readResult = await reader.read();
+            while (readResult.done === false) {
+            // for await (const event of readNDJSONStream(responseBody)) {
+                const event = JSON.parse(readResult.value);
                 if (event["choices"] && event["choices"][0]["context"] && event["choices"][0]["context"]["data_points"]) {
                     event["choices"][0]["message"] = event["choices"][0]["delta"];
                     askResponse = event;
@@ -76,7 +80,8 @@ const Chat = () => {
                 } else if (event["error"]) {
                     throw Error(event["error"]);
                 }
-            }
+                readResult = await reader.read();
+             }
         } finally {
             setIsStreaming(false);
         }
@@ -125,10 +130,12 @@ const Chat = () => {
                 session_state: answers.length ? answers[answers.length - 1][1].choices[0].session_state : null
             };
 
-            const response = await chatApi(request, token?.accessToken);
+            // const response = await chatApi(request, token?.accessToken);
+            const response = await chatApiWps(request, token?.accessToken);
             if (!response.body) {
                 throw Error("No response body");
             }
+
             if (shouldStream) {
                 const parsedResponse: ChatAppResponse = await handleAsyncRequest(question, answers, setAnswers, response.body);
                 setAnswers([...answers, [question, parsedResponse]]);

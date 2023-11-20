@@ -5,7 +5,7 @@ import mimetypes
 import os
 import time
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 import aiohttp
 import openai
@@ -26,12 +26,18 @@ from quart import (
     request,
     send_file,
     send_from_directory,
+    Request,
 )
 from quart_cors import cors
 
 from approaches.chatreadretrieveread import ChatReadRetrieveReadApproach
 from approaches.retrievethenread import RetrieveThenReadApproach
 from core.authentication import AuthenticationHelper
+from azure.messaging.webpubsubservice import WebPubSubServiceClient
+
+cs=""
+hub_name="chat"
+service = WebPubSubServiceClient.from_connection_string(cs, hub_name)
 
 CONFIG_OPENAI_TOKEN = "openai_token"
 CONFIG_CREDENTIAL = "azure_credential"
@@ -132,7 +138,8 @@ async def ask():
             )
         return jsonify(r)
     except Exception as error:
-        return error_response(error, "/ask")
+        logging.exception("Exception in /ask: %s", error)
+        return jsonify(error_dict(error)), 500
 
 
 async def format_as_ndjson(r: AsyncGenerator[dict, None]) -> AsyncGenerator[str, None]:
@@ -144,8 +151,7 @@ async def format_as_ndjson(r: AsyncGenerator[dict, None]) -> AsyncGenerator[str,
         yield json.dumps(error_dict(e))
 
 
-@bp.route("/chat", methods=["POST"])
-async def chat():
+async def chat(request: Request):
     if not request.is_json:
         return jsonify({"error": "request must be json"}), 415
     request_json = await request.get_json()
@@ -165,10 +171,63 @@ async def chat():
         else:
             response = await make_response(format_as_ndjson(result))
             response.timeout = None  # type: ignore
-            response.mimetype = "application/json-lines"
             return response
     except Exception as error:
-        return error_response(error, "/chat")
+        logging.exception("Exception in /chat: %s", error)
+        return jsonify(error_dict(error)), 500
+
+@bp.route('/negotiate', methods=["GET"])
+def negotiate():
+    # id = request.args.get('id')
+    # if not id: return 'missing user id', 400
+
+    token = service.get_client_access_token()
+    return jsonify({ 'url': token['url']}), 200
+
+@bp.route("/eventhandler", methods=["POST", "OPTIONS"])
+async def event_handler():
+    print(f"Triggered event handler, method = {request.method}")
+    if request.method == 'OPTIONS' or request.method == 'GET':
+        if request.headers.get('WebHook-Request-Origin'):
+            return '', 200, {'WebHook-Allowed-Origin': '*'}
+            
+    if request.method == 'POST':
+        js = await request.json
+        if "headers" in js.keys():
+            for (header, value) in js["headers"].items():
+                request.headers.add(header, value)
+
+        if request.headers.get('ce-type') == 'azure.webpubsub.user.chat':
+                response = ChatViaWps(request)
+                async for reply in response:
+                    print(f"reply = {reply}")
+                    connection_id = request.headers.get('Ce-Connectionid')
+                    service.send_to_connection(connection_id, { 'message': reply })
+        return '', 204, {"Content-Type": "application/json"}
+    return 'Unsupported method for Web PubSub Service', 404
+
+async def ChatViaWps(request: Request):
+    try:
+        assert(request.is_json)
+        request_json = await request.get_json()
+        context = request_json.get("context", {})
+        auth_helper = current_app.config[CONFIG_AUTH_CLIENT]
+        context["auth_claims"] = await auth_helper.get_auth_claims_if_enabled(request.headers)
+
+        approach = current_app.config[CONFIG_CHAT_APPROACH]
+        result: AsyncGenerator[dict[str, Any], None] = await approach.run(
+            request_json["messages"],
+            stream=request_json.get("stream", False),
+            context=context,
+            session_state=request_json.get("session_state"),
+        )
+        
+        async for reply in result:
+            print(f"reply = {reply}")
+            yield reply
+
+    except Exception as error:
+        logging.exception("Exception in /chat: %s", error)
 
 
 # Send MSAL.js settings to the client UI

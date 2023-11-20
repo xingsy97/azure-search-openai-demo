@@ -2,6 +2,7 @@ const BACKEND_URI = "";
 
 import { ChatAppResponse, ChatAppResponseOrError, ChatAppRequest } from "./models";
 import { useLogin } from "../authConfig";
+import { OnServerDataMessageArgs, WebPubSubClient } from "@azure/web-pubsub-client";
 
 function getHeaders(idToken: string | undefined): Record<string, string> {
     var headers: Record<string, string> = {
@@ -31,6 +32,24 @@ export async function askApi(request: ChatAppRequest, idToken: string | undefine
 
     return parsedResponse as ChatAppResponse;
 }
+async function getWebPubSubClient() {
+    const client = new WebPubSubClient({
+        getClientAccessUrl: async() => (
+            await fetch("/negotiate").then(x => x.json()).then(x => x.url)
+        )
+    });   
+    client.on("connected", (args)=> { 
+        console.log(`[wps client] on connected, ConnectionId = ${args.connectionId}`); 
+    })
+    client.on("disconnected", () => { console.log("[wps client] on disconnected"); })
+    client.on("server-message", (args: OnServerDataMessageArgs) => {
+        const data = args.message.data as any;
+        console.log(`[wps client][on server-message] from = ${data.from}, message = ${data.message}`);
+    });
+    await client.start();
+    console.log(`[wps client] client started`);
+    return client;
+}
 
 export async function chatApi(request: ChatAppRequest, idToken: string | undefined): Promise<Response> {
     return await fetch(`${BACKEND_URI}/chat`, {
@@ -39,6 +58,32 @@ export async function chatApi(request: ChatAppRequest, idToken: string | undefin
         body: JSON.stringify(request)
     });
 }
+
+const client = await getWebPubSubClient();
+
+export async function chatApiWps(request: ChatAppRequest, idToken: string | undefined): Promise<Response> {
+    console.log(`[internal] chatApi, idToken = ${idToken}, request = ${JSON.stringify(request)}`);
+    (request as any).headers = getHeaders(idToken);
+    
+    client.sendEvent("chat", request, "json");
+
+    const responseStream = new ReadableStream({
+        start(controller) {
+            const serverDataHandler = (args: OnServerDataMessageArgs) => {
+                const data = args.message.data as any;
+                const message = data.message;
+                controller.enqueue(JSON.stringify(message));
+                if (message && message.choices && message.choices[0]["finish_reason"] !== null) {
+                    controller.close();
+                    client.off("server-message", serverDataHandler);
+                }
+            };
+            client.on("server-message", serverDataHandler);
+        }
+    });
+    return new Response(responseStream, {status: 200});
+}
+
 
 export function getCitationFilePath(citation: string): string {
     return `${BACKEND_URI}/content/${citation}`;
