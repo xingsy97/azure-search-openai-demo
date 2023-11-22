@@ -24,6 +24,7 @@ azure-core==1.29.5
     # via
     #   azure-core-tracing-opentelemetry
     #   azure-identity
+    #   azure-messaging-webpubsubclient
     #   azure-messaging-webpubsubservice
     #   azure-monitor-opentelemetry
     #   azure-monitor-opentelemetry-exporter
@@ -33,6 +34,8 @@ azure-core==1.29.5
 azure-core-tracing-opentelemetry==1.0.0b11
     # via azure-monitor-opentelemetry
 azure-identity==1.15.0
+    # via -r requirements.in
+azure-messaging-webpubsubclient==1.0.0b1
     # via -r requirements.in
 azure-messaging-webpubsubservice==1.1.0b1
     # via -r requirements.in
@@ -106,6 +109,7 @@ importlib-metadata==6.8.0
     # via opentelemetry-api
 isodate==0.6.1
     # via
+    #   azure-messaging-webpubsubclient
     #   azure-messaging-webpubsubservice
     #   azure-search-documents
     #   azure-storage-blob
@@ -253,8 +257,8 @@ pycparser==2.21
     # via cffi
 pyjwt[crypto]==2.8.0
     # via
-        #   msal
-        #   azure-messaging-webpubsubservice
+    #   azure-messaging-webpubsubservice
+    #   msal
 python-dateutil==2.8.2
     # via pandas
 pytz==2023.3.post1
@@ -299,6 +303,8 @@ urllib3==2.0.7
     # via requests
 uvicorn==0.24.0.post1
     # via -r requirements.in
+websocket-client==1.6.4
+    # via azure-messaging-webpubsubclient
 werkzeug==3.0.1
     # via
     #   flask

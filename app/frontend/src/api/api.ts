@@ -2,7 +2,7 @@ const BACKEND_URI = "";
 
 import { ChatAppResponse, ChatAppResponseOrError, ChatAppRequest } from "./models";
 import { useLogin } from "../authConfig";
-import { OnServerDataMessageArgs, WebPubSubClient } from "@azure/web-pubsub-client";
+import { OnGroupDataMessageArgs, WebPubSubClient } from "@azure/web-pubsub-client";
 
 function getHeaders(idToken: string | undefined): Record<string, string> {
     var headers: Record<string, string> = {
@@ -42,15 +42,16 @@ async function getWebPubSubClient() {
         console.log(`[wps client] on connected, ConnectionId = ${args.connectionId}`); 
     })
     client.on("disconnected", () => { console.log("[wps client] on disconnected"); })
-    client.on("server-message", (args: OnServerDataMessageArgs) => {
+    client.on("group-message", (args: OnGroupDataMessageArgs) => {
         const data = args.message.data as any;
-        console.log(`[wps client][on server-message] from = ${data.from}, message = ${data.message}`);
+        console.log(`[wps client][on group-message] from = ${data.from}, message = ${data.message}`);
     });
     await client.start();
     console.log(`[wps client] client started`);
     return client;
 }
 
+/*
 export async function chatApi(request: ChatAppRequest, idToken: string | undefined): Promise<Response> {
     return await fetch(`${BACKEND_URI}/chat`, {
         method: "POST",
@@ -58,6 +59,7 @@ export async function chatApi(request: ChatAppRequest, idToken: string | undefin
         body: JSON.stringify(request)
     });
 }
+*/
 
 const client = await getWebPubSubClient();
 
@@ -69,16 +71,16 @@ export async function chatApiWps(request: ChatAppRequest, idToken: string | unde
 
     const responseStream = new ReadableStream({
         start(controller) {
-            const serverDataHandler = (args: OnServerDataMessageArgs) => {
+            const serverDataHandler = (args: OnGroupDataMessageArgs) => {
                 const data = args.message.data as any;
                 const message = data.message;
                 controller.enqueue(JSON.stringify(message));
                 if (message && message.choices && message.choices[0]["finish_reason"] !== null) {
                     controller.close();
-                    client.off("server-message", serverDataHandler);
+                    client.off("group-message", serverDataHandler);
                 }
             };
-            client.on("server-message", serverDataHandler);
+            client.on("group-message", serverDataHandler);
         }
     });
     return new Response(responseStream, {status: 200});

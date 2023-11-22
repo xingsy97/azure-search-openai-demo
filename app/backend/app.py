@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -14,6 +15,11 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
 from azure.search.documents.aio import SearchClient
 from azure.storage.blob.aio import BlobServiceClient
+from azure.messaging.webpubsubclient import WebPubSubClient, WebPubSubClientCredential
+from azure.messaging.webpubsubclient.models import (
+    OnConnectedArgs,
+    WebPubSubDataType
+)
 from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
 from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
 from quart import (
@@ -57,6 +63,33 @@ bp = Blueprint("routes", __name__, static_folder="static")
 mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
 
+client: WebPubSubClient = None
+
+async def get_client():
+    global client
+    if client is not None:
+        return client
+    connection_future = asyncio.Future()
+    # Don't forget to replace this <Client_URL_From_Portal> with the value fetched from the portal
+    client = WebPubSubClient(
+        credential=WebPubSubClientCredential(
+            client_access_url_provider=lambda: service.get_client_access_token(
+                roles=["webpubsub.joinLeaveGroup", "webpubsub.sendToGroup"],
+                user_id="server-controller",
+            )["url"]
+        ),
+    )
+
+    def on_connected(msg: OnConnectedArgs):
+        print(f"Connection {msg.connection_id} is connected")
+        connection_future.set_result(True)
+
+    client.on("connected", on_connected)
+    client._start()
+    await connection_future
+    return client
+
+client: WebPubSubClient = None
 
 @bp.route("/")
 async def index():
@@ -187,23 +220,31 @@ def negotiate():
 @bp.route("/eventhandler", methods=["POST", "OPTIONS"])
 async def event_handler():
     print(f"Triggered event handler, method = {request.method}")
+    client = await get_client()
     if request.method == 'OPTIONS' or request.method == 'GET':
         if request.headers.get('WebHook-Request-Origin'):
             return '', 200, {'WebHook-Allowed-Origin': '*'}
-            
+
+    event = request.headers.get('ce-type')
+    connection_id = request.headers.get('Ce-Connectionid')            
+    user_id = request.headers.get('ce-userid')
+    print(f"event = {event}, connection_id = {connection_id}, user_id = {user_id}")
     if request.method == 'POST':
         js = await request.json
         if "headers" in js.keys():
             for (header, value) in js["headers"].items():
                 request.headers.add(header, value)
 
-        if request.headers.get('ce-type') == 'azure.webpubsub.user.chat':
-                response = ChatViaWps(request)
-                async for reply in response:
-                    print(f"reply = {reply}")
-                    connection_id = request.headers.get('Ce-Connectionid')
-                    service.send_to_connection(connection_id, { 'message': reply })
-        return '', 204, {"Content-Type": "application/json"}
+        if event == 'azure.webpubsub.sys.connected':
+            if user_id != 'server-controller':  # avoid bad loop for first client
+                service.add_connection_to_group(connection_id, connection_id)
+            return '', 200
+
+        if event == 'azure.webpubsub.user.chat':
+            response = ChatViaWps(request)
+            async for reply in response:
+                client.send_to_group(connection_id, { 'message': reply }, WebPubSubDataType.JSON)
+            return '', 204, {"Content-Type": "application/json"}
     return 'Unsupported method for Web PubSub Service', 404
 
 async def ChatViaWps(request: Request):

@@ -15,6 +15,11 @@ page_type: sample
 urlFragment: azure-search-openai-demo
 ---
 
+# Note for using Web PubSub service
+1. Create a Web PubSub resource manually.
+2. Then fill Web PubSub connection string in `app/backend/app.py:43` variable `cs`
+3. Follow construction in orginal README.md below
+
 # ChatGPT + Enterprise data with Azure OpenAI and AI Search
 
 > [!IMPORTANT]  
